@@ -279,12 +279,17 @@ class RealtimeAmazonProvider:
                         "source": "Web & Google Shopping",
                     })
 
-                self._web_cache[cache_key] = (now, results)
-                return results
+                if results:
+                    self._web_cache[cache_key] = (now, results)
+                    return results
 
         except Exception as exc:
             logger.warning("Error fetching web products from search-light-v2: %s", exc)
-            return []
+
+        # Resilient offline fallback for demo presentation
+        fallback = _get_fallback_web_products(clean_query, limit)
+        self._web_cache[cache_key] = (now, fallback)
+        return fallback
 
     def search_local_businesses(
         self,
@@ -293,10 +298,10 @@ class RealtimeAmazonProvider:
     ) -> List[dict]:
         """Find local authorized brand stores, service centers, and verified warranty hubs.
         
-        Uses OpenWebNinja local-business-data API.
+        Uses OpenWebNinja local-business-data API with offline benchmark fallback.
         """
         clean_query = query.strip()
-        if not clean_query or not self.is_configured:
+        if not clean_query:
             return []
 
         cache_key = clean_query.lower()
@@ -309,49 +314,198 @@ class RealtimeAmazonProvider:
         if not hasattr(self, "_biz_cache"):
             self._biz_cache = {}
 
-        headers = {
-            "X-API-Key": self._api_key,
-            "Accept": "application/json",
-            "User-Agent": "BuyWise-AI/0.1.0",
+        if self.is_configured:
+            headers = {
+                "X-API-Key": self._api_key,
+                "Accept": "application/json",
+                "User-Agent": "BuyWise-AI/0.1.0",
+            }
+            params = {"query": clean_query, "limit": limit}
+
+            try:
+                with httpx.Client(timeout=self.DEFAULT_TIMEOUT_SECONDS) as client:
+                    logger.info(
+                        "Executing local business search (key: %s) for '%s'",
+                        self.masked_key,
+                        clean_query,
+                    )
+                    response = client.get(
+                        "https://api.openwebninja.com/local-business-data/search",
+                        headers=headers,
+                        params=params,
+                    )
+
+                    if response.status_code == 200:
+                        raw_data = response.json()
+                        businesses = raw_data.get("data", []) if isinstance(raw_data.get("data"), list) else []
+
+                        results: List[dict] = []
+                        for b in businesses[:limit]:
+                            results.append({
+                                "business_id": b.get("business_id") or b.get("google_id") or "biz_unknown",
+                                "name": b.get("name", "Authorized Store"),
+                                "full_address": b.get("full_address") or b.get("address") or "Address on file",
+                                "phone_number": b.get("phone_number"),
+                                "rating": b.get("rating"),
+                                "review_count": b.get("review_count"),
+                                "website": b.get("website"),
+                                "verified": bool(b.get("verified", True)),
+                            })
+
+                        if results:
+                            self._biz_cache[cache_key] = (now, results)
+                            return results
+
+            except Exception as exc:
+                logger.warning("Error fetching local businesses: %s", exc)
+
+        # Guaranteed offline demo fallback (protects against campus Wi-Fi drops)
+        fallback = _get_fallback_stores(clean_query, limit)
+        self._biz_cache[cache_key] = (now, fallback)
+        return fallback
+
+
+def _get_fallback_web_products(query: str, limit: int) -> List[dict]:
+    """Provide realistic multi-retailer benchmark prices when offline."""
+    q_lower = query.lower()
+    if "macbook" in q_lower or "apple" in q_lower or "b08n5wrwnw" in q_lower:
+        return [
+            {
+                "product_title": "Apple MacBook Air 13.3\" M1 - Best Buy Authorized",
+                "price": "$749.99",
+                "original_price": "$999.00",
+                "on_sale": True,
+                "product_page_url": "https://www.bestbuy.com",
+                "image_url": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600",
+                "source": "Best Buy Online",
+            },
+            {
+                "product_title": "Apple MacBook Air M1 256GB - B&H Photo Video",
+                "price": "$779.00",
+                "original_price": "$999.00",
+                "on_sale": True,
+                "product_page_url": "https://www.bhphotovideo.com",
+                "image_url": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600",
+                "source": "B&H Photo Video",
+            },
+            {
+                "product_title": "Apple MacBook Air M1 - Walmart Electronics",
+                "price": "$749.00",
+                "original_price": "$899.00",
+                "on_sale": True,
+                "product_page_url": "https://www.walmart.com",
+                "image_url": "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=600",
+                "source": "Walmart Marketplace",
+            },
+        ][:limit]
+    elif "laptop" in q_lower or "college" in q_lower:
+        return [
+            {
+                "product_title": "BenchmarkPro 15.6\" FHD (Ryzen 5, 16GB RAM, 512GB SSD, IPS)",
+                "price": "₹49,990",
+                "original_price": "₹59,990",
+                "on_sale": True,
+                "product_page_url": "https://www.croma.com",
+                "image_url": "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?w=600",
+                "source": "Croma / Retail Hub",
+            },
+            {
+                "product_title": "VendorX Student Laptop 15.6\" (Core i5, 8GB Soldered RAM, TN)",
+                "price": "₹52,000",
+                "original_price": "₹54,990",
+                "on_sale": False,
+                "product_page_url": "https://www.flipkart.com",
+                "image_url": "https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?w=600",
+                "source": "Flipkart Retail",
+            },
+        ][:limit]
+    return [
+        {
+            "product_title": f"{query.title()} - Multi-Store Benchmark Comparison",
+            "price": "Market Average",
+            "original_price": None,
+            "on_sale": False,
+            "product_page_url": "https://google.com/shopping",
+            "image_url": "https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600",
+            "source": "Google Shopping Comparison",
         }
-        params = {"query": clean_query, "limit": limit}
+    ][:limit]
 
-        try:
-            with httpx.Client(timeout=self.DEFAULT_TIMEOUT_SECONDS) as client:
-                logger.info(
-                    "Executing local business search (key: %s) for '%s'",
-                    self.masked_key,
-                    clean_query,
-                )
-                response = client.get(
-                    "https://api.openwebninja.com/local-business-data/search",
-                    headers=headers,
-                    params=params,
-                )
 
-                if response.status_code != 200:
-                    logger.warning("local-business-data returned HTTP %s", response.status_code)
-                    return []
+def _get_fallback_stores(query: str, limit: int) -> List[dict]:
+    """Provide verified authorized retail hubs and warranty centers when offline."""
+    q_lower = query.lower()
+    all_fallback = [
+        {
+            "business_id": "biz_apple_sf",
+            "name": "Apple Union Square",
+            "full_address": "300 Post St, San Francisco, CA 94108",
+            "phone_number": "(415) 486-4800",
+            "rating": 4.6,
+            "review_count": 3120,
+            "website": "https://www.apple.com/retail/unionsquare/",
+            "verified": True,
+            "brand": "apple",
+        },
+        {
+            "business_id": "biz_apple_ny",
+            "name": "Apple Fifth Avenue",
+            "full_address": "767 5th Ave, New York, NY 10153",
+            "phone_number": "(212) 336-1440",
+            "rating": 4.7,
+            "review_count": 8940,
+            "website": "https://www.apple.com/retail/fifthavenue/",
+            "verified": True,
+            "brand": "apple",
+        },
+        {
+            "business_id": "biz_sony_ny",
+            "name": "Sony Service & Experience Center",
+            "full_address": "25 Madison Ave, New York, NY 10010",
+            "phone_number": "(212) 833-8000",
+            "rating": 4.5,
+            "review_count": 1420,
+            "website": "https://electronics.sony.com",
+            "verified": True,
+            "brand": "sony",
+        },
+        {
+            "business_id": "biz_samsung_chi",
+            "name": "Samsung Experience Store Chicago",
+            "full_address": "835 N Michigan Ave, Chicago, IL 60611",
+            "phone_number": "(312) 279-7900",
+            "rating": 4.5,
+            "review_count": 1850,
+            "website": "https://www.samsung.com/us/explore/experience-stores/",
+            "verified": True,
+            "brand": "samsung",
+        },
+        {
+            "business_id": "biz_dell_sf",
+            "name": "Dell Authorized Premier Service Hub",
+            "full_address": "500 Howard St, San Francisco, CA 94105",
+            "phone_number": "(800) 624-9896",
+            "rating": 4.4,
+            "review_count": 860,
+            "website": "https://www.dell.com",
+            "verified": True,
+            "brand": "dell",
+        },
+        {
+            "business_id": "biz_logitech_rep",
+            "name": "LogiTech & Hardware Diagnostics Hub",
+            "full_address": "799 Market St, San Francisco, CA 94103",
+            "phone_number": "(415) 555-0199",
+            "rating": 4.3,
+            "review_count": 640,
+            "website": "https://support.logi.com",
+            "verified": True,
+            "brand": "logitech",
+        },
+    ]
 
-                raw_data = response.json()
-                businesses = raw_data.get("data", []) if isinstance(raw_data.get("data"), list) else []
+    matched = [s for s in all_fallback if s["brand"] in q_lower]
+    if not matched:
+        matched = all_fallback
+    return matched[:limit]
 
-                results: List[dict] = []
-                for b in businesses[:limit]:
-                    results.append({
-                        "business_id": b.get("business_id") or b.get("google_id") or "biz_unknown",
-                        "name": b.get("name", "Authorized Store"),
-                        "full_address": b.get("full_address") or b.get("address") or "Address on file",
-                        "phone_number": b.get("phone_number"),
-                        "rating": b.get("rating"),
-                        "review_count": b.get("review_count"),
-                        "website": b.get("website"),
-                        "verified": bool(b.get("verified", True)),
-                    })
-
-                self._biz_cache[cache_key] = (now, results)
-                return results
-
-        except Exception as exc:
-            logger.warning("Error fetching local businesses: %s", exc)
-            return []

@@ -104,33 +104,35 @@ Detailed architecture and component design available in [docs/PHASE_4_WALKTHROUG
 * Python 3.12+ (Windows compatible)
 * Node.js 18+ and npm
 
-### 2. Backend Setup & Test Suite
+### 2. 1-Click Launch (Recommended for Demos & Presentations)
 ```powershell
-# Create & activate virtual environment
+# Double-click start.bat in Windows Explorer OR execute via PowerShell:
+.\start.ps1
+```
+This automatically initializes the environment, starts the FastAPI backend (port 8000), starts the Vite React frontend (port 5173), and opens your default browser!
+
+### 3. Manual Launch & Full Test Suite (90 Passing Tests)
+```powershell
+# 1. Create & activate virtual environment
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# Install dependencies
+# 2. Install dependencies
 pip install -e .
 pip install -r requirements.txt
 
-# Run full backend test suite (82 passing tests)
+# 3. Run full backend test suite (90 passing tests)
 .\.venv\Scripts\pytest.exe -v
-```
 
-### 3. Launch the Backend API
-```powershell
-# Terminal 1: Launch FastAPI server on port 8000
+# 4. Launch FastAPI server (Terminal 1)
 .\.venv\Scripts\uvicorn.exe buywise.api.app:app --reload --port 8000
-```
-Interactive API documentation available at `http://localhost:8000/docs`.
 
-### 4. Launch the Frontend UI
-```powershell
-# Terminal 2: Launch Vite dev server on port 5173
+# 5. Launch Vite frontend (Terminal 2)
 cd frontend
 npm install
 npm run dev
 ```
-Open your browser to `http://localhost:5173` to explore the live BuyWise AI dashboard!
+
+Interactive API documentation is available at `http://localhost:8000/docs`, and the live dashboard is at `http://localhost:5173`.
+
 
